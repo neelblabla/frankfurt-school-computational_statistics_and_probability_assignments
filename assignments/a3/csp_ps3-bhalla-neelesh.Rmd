@@ -1,0 +1,394 @@
+---
+title: "Computational Statistics & Probability"
+subtitle: "Problem Set 3 - Information Criteria and Interactions"
+author: "Author: Neelesh Bhalla  \nCollaborators: Nils Marthiensen, Chia-Jung Chang"
+date: "`r Sys.Date()`"
+output: 
+  pdf_document:
+    latex_engine: xelatex
+---
+
+## 1. Collider Bias and Information Criteria
+Return to the textbook example in §6.3.1, which explores the relationship between age, marriage and happiness.
+```{r}
+library(rethinking)
+d <- sim_happiness( seed=1515 , N_years=1000)
+d2 <- d[ d$age>17 , ] # only adults
+d2$A <- (d2$age - 18) / (65 - 18)
+d2$mid <- d2$married + 1
+precis(d)[,1:4]
+```
+```{r}
+# drawing the D.A.G.
+library(dagitty)
+dag_q1 <- dagitty('dag{ H -> M <- A }')
+drawdag( dag_q1 )
+```
+
+a) Which model is expected to make better predictions according to these information criteria?
+```{r}
+# recalling model m6.9 that considers the effect of age and marriage status on happiness
+m6.9 <- quap(
+alist(
+happiness ~ dnorm( mu , sigma ),
+mu <- a[mid] + bA*A,
+a[mid] ~ dnorm( 0 , 1 ),
+bA ~ dnorm( 0 , 2 ),
+sigma ~ dexp(1)
+) , data=d2 )
+precis(m6.9,depth=2)
+# model m6.9 is quite sure that age is negatively associated with happiness.
+```
+```{r}
+# recalling model m6.10 that omits marriage status
+m6.10 <- quap(
+alist(
+happiness ~ dnorm( mu , sigma ),
+mu <- a + bA*A,
+a ~ dnorm( 0 , 1 ),
+bA ~ dnorm( 0 , 2 ),
+sigma ~ dexp(1)
+) , data=d2 )
+precis(m6.10)
+# model m6.10 in contrast, finds no association between age and happiness.
+```
+```{r}
+# Notes from the book (pg 184):
+# The pattern above is exactly what we should expect when we condition on a collider.
+# The collider is marriage status. It a common consequence of age and happiness. 
+# As a result, when we condition on it, we induce a spurious association between the two causes.
+# So it looks like, to model m6.9, that age is negatively associated with happiness. 
+# But this is just a statistical association, not a causal association. 
+# Once we know whether someone is married or not, then their age does provide information 
+# about how happy they are.
+```
+
+
+Compare the two models, m6.9 and m6.10, using both PSIS and WAIC.
+```{r}
+# comparing models using PSIS
+compare( m6.9, m6.10, func=PSIS)
+```
+
+```{r}
+# comparing models using WAIC
+compare( m6.9, m6.10, func=WAIC)
+```
+
+a) Which model is expected to make better predictions according to these information criteria?
+```{r}
+# Both PSIS and WAIC values suggest that model m6.9 (that considers the effect of age and
+# marriage status on happiness) is expected to make better predictions than model m6.10 (that
+# omits marriage status)
+# Smaller values of PSIS and WAIC are better.
+```
+
+b) On the basis of the causal model, how should you interpret the parameter estimates from the model preferred by PSIS and WAIC?
+```{r}
+# The pWAIC and pPSIS are the penalty terms. 
+# These values are close to the number of dimensions (3 for m6.9 and 2 for m6.10) 
+# in the posterior of each model
+
+# The columns dWAIC and dPSIS reflect the difference between each model’s WAIC/PSIS and 
+# the best WAIC/PSIS in the set. So it’s zero for the best model and then the 
+# differences with the other models tell you how far apart each is from the top model. 
+# Model m6.9 is about 330 units of deviance smaller than models m6.10.
+
+# SE is the approximate standard error of each WAIC/PSIS. In a very approximate sense, 
+# we expect out-of-sample accuracy to be normally distributed with mean equal to the 
+# reported WAIC/PSIS value and a standard deviation equal to the standard error. 
+# To judge whether two models are easy to distinguish, we don’t use their standard 
+# errors but rather the standard error of their difference.
+```
+
+```{r}
+# visually understanding PSIS based difference in two models
+plot( compare( m6.9 , m6.10, func=PSIS ) )
+```
+
+```{r}
+# visually understanding WAIC based difference in two models
+plot( compare( m6.9 , m6.10, func=WAIC ) )
+```
+
+```{r}
+# The filled points are the in-sample deviance values. The open points are the WAIC values.
+# Each model does better in-sample than it is expected to do out-ofsample.
+# The line segments show the standard error of each WAIC. These are the values  
+# of SE in the table above. So we can see how much better m6.9 is than m6.10. 
+# The standard error of the difference in WAIC between the two models is shown by the lighter
+# line segment with the triangle on it, between m6.9 and m6.10.
+```
+
+
+## 2. Laffer Curve
+In 2007 The Wall Street Journal published an editorial arguing that raising corporate tax rates increases government revenues only to a point, after which higher tax rates produce less revenue for governments. The editorial included the following graph of corporate tax rates in 29 countries plotted against tax revenue, over which a Laffer curve was drawn.
+The data used in this plot are available in the rethinking package.
+```{r}
+library(rethinking)
+data(Laffer)
+d3 <- Laffer
+precis( d3 )[,1:4]
+```
+
+a) Using this data, fit a basic regression that uses tax rate to predict tax revenue. Simulate and justify your priors.
+```{r}
+library(dagitty)
+dag_q2 <- dagitty('dag{ taxRATE -> taxREVENUE }')
+drawdag( dag_q2 )
+```
+
+```{r}
+# plotting the data
+plot( d3$tax_revenue ~ d3$tax_rate )
+```
+
+```{r}
+# Presenting prior predictive simulation for  tax_revenue & tax_rate model with 
+# normal-distribution of 'b'
+# For starters, the intercept 'a' (mean tax_revenue) can assume a normal distribution 
+# with a mean of 3
+# While the slope 'b' can be assumed to be normally distributed and centered at mean 0, 
+# with SD of 0.2
+
+N <- 100
+a <- rnorm( N , 3 , 1 )
+b <- rnorm( N , 0 , 0.2 )
+plot( NULL , xlim=range(d3$tax_rate) , ylim=c(0,15) ,
+xlab="tax_rate" , ylab="tax_revenue" )
+abline( h=1 , lty=2, lwd=0.5 )
+abline( h=5 , lty=2 , lwd=0.5 )
+mtext( "b ~ dnorm(0,0.2)" )
+xbar <- mean(d3$tax_rate)
+for ( i in 1:N ) curve( a[i] + b[i]*(x - xbar) ,
+from=min(d3$tax_rate) , to=max(d3$tax_rate) , add=TRUE ,
+col=col.alpha("black",0.2) )
+```
+
+```{r}
+# The values of b are completely random in first iteration suggesting tax_revenue could 
+# be related to tax_rate in any random fashion, which should not be the ideal case.
+```
+
+```{r}
+# Attempting prior predictive simulation for tax_revenue & tax_rate model with
+# log-normal-distribution of 'b'. Let’s try restricting it to positive values 
+# assuming that average tax_revenue increases with average tax_rate, at least up to a point. 
+N <- 100
+a <- rnorm( N , 3 , 1 )
+b <- rlnorm( N , 0 , 0.2 )
+# Prior predictive simulation for the tax_revenue and tax_rate model
+plot( NULL , xlim=range(d3$tax_rate) , ylim=c(0,15) ,
+xlab="tax_rate" , ylab="tax_revenue" )
+abline( h=1 , lty=2, lwd=0.5 )
+abline( h=5 , lty=2 , lwd=0.5 )
+mtext( "log(b) ~ dnorm(0,0.2)" )
+xbar <- mean(d3$tax_rate)
+for ( i in 1:N ) curve( a[i] + b[i]*(x - xbar) ,
+from=min(d3$tax_rate) , to=max(d3$tax_rate) , add=TRUE ,
+col=col.alpha("black",0.2) )
+```
+
+```{r}
+# Posterior distribution for tax_revenue and tax_rate - basic linear model
+# fit model
+xbar <- mean(d3$tax_rate)
+m2a <- quap(
+alist(
+tax_revenue ~ dnorm( mu , sigma ) ,
+mu <- a + b*( tax_rate - xbar ) ,
+a ~ dnorm( 3 , 1 ) ,
+b ~ dlnorm( 0 , 0.2 ) ,
+sigma ~ dunif( 0 , 4 )
+) ,
+data=d3 )
+# the marginal posterior distributions is as follows
+precis( m2a )
+```
+```{r}
+round( vcov( m2a ) , 3 )
+# the variance-covariance matrix
+```
+```{r}
+plot( tax_revenue ~ tax_rate , data=d3 , col=rangi2 )
+post <- extract.samples( m2a )
+a_map <- mean(post$a)
+b_map <- exp(mean(post$b))
+curve( a_map + b_map*(x - xbar) , add=TRUE )
+```
+
+b) Now construct and fit any curved model you wish to the data. Plot your straight-line model and your new curved model. Each plot should include 89% PI intervals.
+```{r}
+# Posterior distribution for tax_revenue and tax_rate making use of a 
+# QUADRATIC_POLYNOMIAL based model
+d3$tax_rate_s <- ( d3$tax_rate - mean(d3$tax_rate) )/sd(d3$tax_rate)
+d3$tax_rate_s2 <- d3$tax_rate_s^2
+m2b_2 <- quap(
+  alist(
+tax_revenue ~ dnorm( mu , sigma ) ,
+mu <- a + b1*tax_rate_s + b2*tax_rate_s2 ,
+a ~ dnorm( 3 , 1 ) ,
+b1 ~ dlnorm( 0 , 0.2 ) ,
+b2 ~ dnorm( 0 , 0.2 ) ,
+sigma ~ dunif( 0 , 4 )
+) ,
+data=d3 )
+precis(m2b_2)
+```
+
+```{r}
+# Plotting the LINEAR model now
+tax_rate.seq <- seq(from=-50, to=50, length.out=50)
+pred_dat <- list( tax_rate=tax_rate.seq )
+mu <- link( m2a , data=pred_dat )
+mu.mean <- apply( mu , 2 , mean )
+mu.PI <- apply( mu , 2 , PI , prob=0.89 )
+sim.tax_revenue <- sim( m2a , data=pred_dat )
+tax_revenue.PI <- apply( sim.tax_revenue , 2 , PI , prob=0.89 )
+
+plot( d3$tax_revenue ~ d3$tax_rate , d , col=col.alpha(rangi2,0.5) )
+lines( tax_rate.seq , mu.mean )
+shade( mu.PI , tax_rate.seq )
+shade( tax_revenue.PI , tax_rate.seq )
+```
+
+```{r}
+# Plotting the QUADRATIC POLYNOMIAL model now
+tax_rate.seq <- seq(from=-3.5, to=3.5, length.out=50)
+pred_dat <- list( tax_rate_s=tax_rate.seq , tax_rate_s2=tax_rate.seq^2 )
+mu <- link( m2b_2 , data=pred_dat )
+mu.mean <- apply( mu , 2 , mean )
+mu.PI <- apply( mu , 2 , PI , prob=0.89 )
+sim.tax_revenue <- sim( m2b_2 , data=pred_dat )
+tax_revenue.PI <- apply( sim.tax_revenue , 2 , PI , prob=0.89 )
+
+plot( d3$tax_revenue ~ d3$tax_rate_s , d , col=col.alpha(rangi2,0.5) )
+lines( tax_rate.seq , mu.mean )
+shade( mu.PI , tax_rate.seq )
+shade( tax_revenue.PI , tax_rate.seq )
+```
+
+c) Using WAIC or PSIS, compare a straight-line model to your curved model. What conclusions would you draw from comparing your two models?
+```{r}
+# comparing models using WAIC
+compare( m2a, m2b_2, func=WAIC)
+```
+```{r}
+# comparing models using PSIS
+compare( m2a, m2b_2, func=PSIS)
+```
+
+```{r}
+# Both PSIS and WAIC values suggest that QUADRATIC model m2b_2 is expected to make better
+# predictions than LINEAR model m2a
+# Smaller values of PSIS and WAIC are better.
+# The pWAIC and pPSIS are the penalty terms. 
+# The columns dWAIC and dPSIS reflect the difference between each model’s WAIC/PSIS and 
+# the best WAIC/PSIS in the set. So it’s zero for the best model and then the 
+# differences with the other models tell you how far apart each is from the top model. 
+# Model m2b_2 is about 28 units of deviance smaller than models m6.10.
+
+# SE is the approximate standard error of each WAIC/PSIS. In a very approximate sense, 
+# we expect out-of-sample accuracy to be normally distributed with mean equal to the 
+# reported WAIC/PSIS value and a standard deviation equal to the standard error. 
+# To judge whether two models are easy to distinguish, we don’t use their standard 
+# errors but rather the standard error of their difference.
+```
+
+```{r}
+plot( compare( m2a, m2b_2, func=WAIC ) )
+```
+
+```{r}
+plot( compare( m2a, m2b_2, func=PSIS ) )
+```
+```{r}
+# When we look at the plots, we realise that model m2b_2 has a higher SE (~24) as compared to
+# the SE (~8) of m2a . But m2b_2 is still a favorable choice of model because of its low PSIS and
+# WAIC values
+```
+
+
+d) There is one country with a high tax revenue which is an outlier. Use PSIS and WAIC to measure the importance of this outlier in the two models you fit.
+```{r}
+set.seed(24071847)
+PSIS_m2a <- PSIS(m2a,pointwise=TRUE)
+set.seed(24071847)
+WAIC_m2a <- WAIC(m2a,pointwise=TRUE)
+plot( PSIS_m2a$k , WAIC_m2a$penalty , xlab="PSIS Pareto k" ,
+ylab="WAIC penalty" , col=rangi2 , lwd=2 )
+```
+
+```{r}
+set.seed(24071847)
+PSIS_m2b_2 <- PSIS(m2b_2,pointwise=TRUE)
+set.seed(24071847)
+WAIC_m2b_2 <- WAIC(m2b_2,pointwise=TRUE)
+plot( PSIS_m2b_2$k , WAIC_m2b_2$penalty , xlab="PSIS Pareto k" ,
+ylab="WAIC penalty" , col=rangi2 , lwd=2 )
+```
+
+```{r}
+# In both of these cases, there is an identifiable outlier with high Pareto k value as well as
+# high WAIC penalty.
+# We need to account for this outlier because Points like these are highly influential and
+# potentially hurt prediction.
+```
+
+
+```{r}
+# Let’s re-estimate the rate-revenue model model using a Student-t distribution with ν = 4
+# we call the model m2b_2t
+m2b_2t <- quap(
+alist(
+tax_revenue ~ dstudent( 4 , mu , sigma ) ,
+mu <- a + b1*tax_rate_s + b2*tax_rate_s2 ,
+a ~ dnorm( 3 , 1 ) ,
+b1 ~ dlnorm( 0 , 0.2 ) ,
+b2 ~ dnorm( 0 , 0.2 ) ,
+sigma ~ dunif( 0 , 4 )
+) , data = d3 )
+precis(m2b_2t)
+```
+
+```{r}
+# When we compute PSIS now, PSIS(m2b_2t), we don’t get any warnings about Pareto k values.
+set.seed(24071847)
+PSIS_m2b_2t <- PSIS(m2b_2t,pointwise=TRUE)
+set.seed(24071847)
+WAIC_m2b_2t <- WAIC(m2b_2t,pointwise=TRUE)
+plot( PSIS_m2b_2t$k , WAIC_m2b_2t$penalty , xlab="PSIS Pareto k" ,
+ylab="WAIC penalty" , col=rangi2 , lwd=2 )
+```
+
+```{r}
+# NOW, Plotting the QUADRATIC model m2b_2t (with Student's T distribution)
+tax_rate.seq <- seq(from=-3.5, to=3.5, length.out=50)
+pred_dat <- list( tax_rate_s=tax_rate.seq , tax_rate_s2=tax_rate.seq^2 )
+mu <- link( m2b_2t , data=pred_dat )
+mu.mean <- apply( mu , 2 , mean )
+mu.PI <- apply( mu , 2 , PI , prob=0.89 )
+sim.tax_revenue <- sim( m2b_2t , data=pred_dat )
+tax_revenue.PI <- apply( sim.tax_revenue , 2 , PI , prob=0.89 )
+
+plot( d3$tax_revenue ~ d3$tax_rate_s , d , col=col.alpha(rangi2,0.5) )
+lines( tax_rate.seq , mu.mean )
+shade( mu.PI , tax_rate.seq )
+shade( tax_revenue.PI , tax_rate.seq )
+```
+
+```{r}
+# From the above graph as well, we can see that now the 89% PI intervals for m2b_2t (with
+# Student-t distribution) is much more narrow (confident) than that for the model b2b_2
+```
+
+e) Given your analysis, what conclusions do you draw about the relationship between tax rate and tax revenue? Do your conclusions support the original Laffer curve plot used in the editorial?
+```{r}
+# From the analysis, it is easy to conclude that a polynomial regressor (degree 2) is a better 
+# predictor of tax_revenue than a linear regressor (degree 1).
+# This is much in lines with the Laffer curve plot which also somewhat resembles a quadratic 
+# polynomial (degree 2)
+# Even though with significantly high PSIS/WAIC values, the relationship between tax_revenue 
+# and tax_rate is certainly better explained by a degree two polynomial than a degree one 
+# linear curve.
+```
