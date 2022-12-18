@@ -1,0 +1,209 @@
+---
+title: "Computational Statistics & Probability"
+subtitle: "Problem Set 5 - Multilevel Models"
+author: "Author: Neelesh Bhalla  \nCollaborators: Nils Marthiensen, Chia-Jung Chang"
+date: "`r Sys.Date()`"
+output: 
+  pdf_document:
+    latex_engine: xelatex
+---
+
+## 1. Varying Slopes and Effective Parameters
+
+When is it possible for a varying slopes model to have fewer effective parameters (as estimated by WAIC or
+PSIS) than the corresponding model with fixed slopes? Explain your answer.
+```{r}
+# Consider a case of tight priors. If the prior assigned to each intercept shrinks 
+# them all towards the mean, this will result in fewer effective parameters. 
+
+# If we have an aggressive regularizing prior, this will result in a less 
+# flexible posterior and therefore fewer effective parameters
+
+# When there is little or next-to-no variation among clusters. 
+# The absence of this among-cluster variation induces very strong shrinkage. 
+# As a result, albeit containing more actual parameters in the posterior 
+# distribution, the varying slopes model may end up less flexible in fitting 
+# to the data because of adaptive regularization forcing strong shrinkage. 
+# Consequently, our number of effective parameters - a proxy of over-fitting 
+# risk and posterior flexibility - decreases.
+```
+
+
+```{r}
+# For demonstration, we can consult the comparison of models m13.1 and m13.2 in R Code 13.4 in the book.
+
+# The models are applied on Reed frog tadpole mortality data.
+
+# We are interested in number surviving, out of an initial count of tadpoles.
+
+library(rethinking)
+data(reedfrogs)
+d <- reedfrogs
+str(d)
+```
+
+
+```{r}
+d$tank <- 1:nrow(d)
+dat <- list(
+S = d$surv,
+N = d$density,
+tank = d$tank )
+
+# approximate posterior for ordinary fixed model
+m13.1 <- ulam(
+  alist(
+    S ~ dbinom( N , p ) ,
+    logit(p) <- a[tank] ,
+    a[tank] ~ dnorm( 0 , 1.5 )
+  ), data=dat , chains=4 , log_lik=TRUE, refresh=0 )
+```
+
+```{r}
+# the multilevel model
+m13.2 <- ulam(
+  alist(
+    S ~ dbinom( N , p ) ,
+    logit(p) <- a[tank] ,
+    a[tank] ~ dnorm( a_bar , sigma ) ,
+    a_bar ~ dnorm( 0 , 1.5 ) ,
+    sigma ~ dexp( 1 )
+  ), data=dat , chains=4 , log_lik=TRUE, refresh=0 )
+```
+
+```{r}
+# comparing the models
+compare( m13.1 , m13.2 )
+```
+```{r}
+# The multilevel model has only 21 effective parameters. There are 28 fewer effective 
+# parameters than actual parameters, because the prior assigned to each intercept 
+# shrinks them all towards the mean ¯α. In this case, the prior is reasonably strong. 
+# the amount of regularization has been learned from the data itself
+
+# The multilevel model m13.2 has fewer effective parameters than the ordinary fixed 
+# model m13.1. This is despite the fact that the ordinary model has fewer actual 
+# parameters, only 48 (i.e. the number of observations in the data) instead 
+# of 50 with m13.2 (one overall sample intercept ¯α, the standard deviation among tanks σ, 
+# and then 48 per-tank intercepts..)
+
+# The extra two parameters in the multilevel 
+# model allowed it to learn a more aggressive regularizing prior, to adaptively regularize. 
+# This resulted in a less flexible posterior and therefore fewer effective parameters.
+
+# This is explained in the literature as well.
+```
+
+
+## 2. Gaussian Process Regression
+
+a) Go to section §14.5 in the textbook and compare the Gaussian process model of Oceanic tools, m14.8, to
+all the models fit to the same data in §11.2 by WAIC. This first step asks you to just produce the table.
+```{r}
+# load the data
+library(rethinking)
+data(Kline2)
+d <- Kline2
+d
+```
+
+```{r}
+# Revisiting Gaussian process model (m14.8) of Oceanic tools from section §14.5 
+
+d$society <- 1:10 # index observations
+data(islandsDistMatrix)
+
+dat_list <- list(
+  T = d$total_tools,
+  P = d$population,
+  society = d$society,
+  Dmat=islandsDistMatrix )
+
+
+m14.8 <- ulam(
+  alist(
+    T ~ dpois(lambda),
+    lambda <- (a*P^b/g)*exp(k[society]),
+    vector[10]:k ~ multi_normal( 0 , SIGMA ),
+    matrix[10,10]:SIGMA <- cov_GPL2( Dmat , etasq , rhosq , 0.01 ),
+    c(a,b,g) ~ dexp( 1 ),
+    etasq ~ dexp( 2 ),
+    rhosq ~ dexp( 0.5 )
+  ), data=dat_list , chains=4 , cores=4 , iter=2000 , log_lik=TRUE, refresh=0)
+# we set the ulam() argument log_lik=TRUE for comparison with WAIC in the next step.
+```
+
+```{r}
+# Revisiting models fit over same data from section §11.2
+
+d$P <- scale( log(d$population) )
+d$contact_id <- ifelse( d$contact=="high" , 2 , 1 )
+
+dat <- list(
+T = d$total_tools ,
+P = d$P ,
+cid = d$contact_id )
+
+
+# intercept only
+m11.9 <- ulam(
+  alist(
+    T ~ dpois( lambda ),
+    log(lambda) <- a,
+    a ~ dnorm(3,0.5)
+  ), data=dat , chains=4 , log_lik=TRUE, refresh=0 )
+
+
+# interaction model
+m11.10 <- ulam(
+  alist(
+    T ~ dpois( lambda ),
+    log(lambda) <- a[cid] + b[cid]*P,
+    a[cid] ~ dnorm( 3 , 0.5 ),
+    b[cid] ~ dnorm( 0 , 0.2 )
+  ), data=dat , chains=4 , log_lik=TRUE, refresh=0 )
+
+
+# the scientific model (model with tool innovation; under 'overthinking' section in the book)
+dat2 <- list( T=d$total_tools, P=d$population, cid=d$contact_id )
+m11.11 <- ulam(
+  alist(
+    T ~ dpois( lambda ),
+    lambda <- exp(a[cid])*P^b[cid]/g,
+    a[cid] ~ dnorm(1,1),
+    b[cid] ~ dexp(1),
+    g ~ dexp(1)
+  ), data=dat2 , chains=4 , log_lik=TRUE, refresh=0 )
+
+```
+
+```{r}
+compare( m14.8, m11.9, m11.10, m11.11, func=WAIC )
+```
+
+b) What can you learn about your models through their WAIC scores? In your analysis, pay special attention
+to the effective number of parameters estimated by WAIC.
+
+```{r}
+plot (compare( m14.8, m11.9, m11.10, m11.11, func=WAIC ))
+```
+```{r}
+# The standard error of Gaussian process model is the least among all the models. Also, the WAIC
+# score for this model is the least as well. This makes it the best model choice amongst 
+# the one under consideration.
+```
+
+```{r}
+# For the result above, we found that the more complex model taking into account spatial 
+# distances of societies m14.8 outperforms all other models. 
+
+# Also the Gaussian process model has less effective parameters (pWAIC) than the simpler model.
+# This is a sign of intense regularization on the part of the Gaussian Process model.
+```
+
+```{r}
+# Taking a look at the effective number of parameters, the order of regularization 
+# in the priors is as follows:
+# m14.8 > m11.11 > m11.10 > m11.9
+```
+

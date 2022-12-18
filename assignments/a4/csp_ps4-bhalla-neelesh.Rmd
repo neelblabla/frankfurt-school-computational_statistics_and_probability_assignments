@@ -1,0 +1,496 @@
+---
+title: "Computational Statistics & Probability"
+subtitle: "Problem Set 4 - HMC and Generalized Linear Models"
+author: "Author: Neelesh Bhalla  \nCollaborators: Nils Marthiensen, Chia-Jung Chang"
+date: "`r Sys.Date()`"
+output: 
+  pdf_document:
+    latex_engine: xelatex
+---
+
+## 1. Log-odds
+a) If an event has probability 0.3, what are the log-odds of this event?
+```{r}
+p_1a <- 0.3
+# The odds are defined as the probability that the event will occur divided by 
+# the probability that the event will not occur 
+odds_1a <- p_1a / (1 - p_1a)
+log_odds_1a <- log(odds_1a)
+log_odds_1a
+```
+
+b) If an event has log-odds of 1, what is the probability of that event?
+```{r}
+log_odds_1b <- 1
+odds_1b <- exp(log_odds_1b)
+# reversing the mathematical formula of odds to derive probability
+p_1b <- odds_1b / (1 + odds_1b)
+p_1b
+```
+
+
+c) If a logistic regression coefficient has value -0.70, what does this imply about the proportional change in odds of the outcome? Briefly explain your answer.
+```{r}
+# By definition, the logistic regression coefficient (let's say β) associated with a 
+# predictor (X) is the expected change in log odds of having the outcome per unit change in X. 
+# So increasing the predictor by 1 unit (or going from 1 level to the next) multiplies 
+# the odds of having the outcome by e^β.
+
+# In our case, (logistic regression coefficient) β = -0.70
+# So every unit change in the predictor multiplies the odds of having the outcome 
+# by e^β = e^(-0.70) which is evaluated below
+
+exp(-0.70)
+```
+
+```{r}
+# So every unit change in the predictor multiplies the odds of having the outcome by 0.4965853
+```
+
+## 2. HMC, Interactions and Robust Priors
+Recall the interaction model m8.3, which is a varying-slope regression model assessing the effect of a country being inside or outside Africa on relationship between the ruggedness of its terrain and its GDP.
+```{r}
+# The following code will load the data and reduce it down to cases (nations) that 
+# have the outcome variable of interest
+library(rethinking)
+data(rugged)
+d <- rugged
+d$log_gdp <- log(d$rgdppc_2000)
+dd <- d[ complete.cases(d$rgdppc_2000) , ]
+dd$log_gdp_std <- dd$log_gdp / mean(dd$log_gdp)
+dd$rugged_std <- dd$rugged / max(dd$rugged)
+dd$cid <- ifelse( dd$cont_africa==1 , 1 , 2 )
+```
+
+```{r}
+# This model aims to predict log GDP with terrain ruggedness, continent, and the 
+# interaction of the two (making use of quap)
+m8.3 <- quap(
+alist(
+log_gdp_std ~ dnorm(mu, sigma),
+mu <- a[cid] + b[cid]*(rugged_std - 0.215) ,
+a[cid] ~ dnorm(1, 0.1),
+b[cid] ~ dnorm(0, 0.3),
+sigma ~ dexp(1)
+), data = dd)
+precis( m8.3 , depth=2 )
+```
+
+a) Now fit this same model using Hamiltonian Monte Carlo (HMC). The code to do this is in the book, beginning with R code 9.13. You should use the ulam convenience function provided by the rethinking package.
+```{r}
+# Presenting a slim list of the variables that will be used
+dat_slim <- list(
+log_gdp_std = dd$log_gdp_std,
+rugged_std = dd$rugged_std,
+cid = as.integer( dd$cid )
+)
+str(dat_slim)
+```
+
+```{r}
+# Sampling from the posterior. Getting samples from the posterior distribution with this code:
+m2a_1c <- ulam(
+alist(
+log_gdp_std ~ dnorm( mu , sigma ) ,
+mu <- a[cid] + b[cid]*( rugged_std - 0.215 ) ,
+a[cid] ~ dnorm( 1 , 0.1 ) ,
+b[cid] ~ dnorm( 0 , 0.3 ) ,
+sigma ~ dexp( 1 )
+) , data=dat_slim , chains=1 )
+```
+
+```{r}
+# 'show' tells us about the model formula and also about how long each chain took to run
+show( m2a_1c )
+```
+
+
+```{r}
+# The estimates are very similar to the quadratic approximation as observed above in this 
+# very question itself
+precis( m2a_1c , depth=2 )
+```
+
+```{r}
+# n_eff column provide diagnostic criteria, to help quantify how well the sampling worked. 
+# n_eff is a crude estimate of the number of independent samples the model managed to get
+
+# Rhat is a complicated estimate of the convergence of the Markov chains to the target
+# distribution. For this model, as desired, it approaches 1.00 from above, when all is well.
+```
+
+
+```{r}
+# Now sampling again but this time in parallel. Running all 4 chains at the same time, 
+# instead of in sequence.
+m2a_4c <- ulam(
+alist(
+log_gdp_std ~ dnorm( mu , sigma ) ,
+mu <- a[cid] + b[cid]*( rugged_std - 0.215 ) ,
+a[cid] ~ dnorm( 1 , 0.1 ) ,
+b[cid] ~ dnorm( 0 , 0.3 ) ,
+sigma ~ dexp( 1 )
+) , data=dat_slim , chains=4 , cores=4 )
+```
+
+```{r}
+# 'show' tells us about the model formula and also about how long each chain took to run
+show( m2a_4c )
+# There were 2000 samples from all 4 chains, because each 1000 sample chain uses by default 
+# the fist half of the samples to adapt
+```
+
+```{r}
+precis( m2a_4c , 2 )
+```
+```{r}
+# It is intriguing that we have more than 2000 effective samples for each parameter.
+# The book explains that "the adaptive sampler that Stan uses is so good, it can 
+# actually produce sequential samples that are better than uncorrelated. They are
+# anti-correlated. This means it can explore the posterior distribution so efficiently 
+# that it can beat random."
+```
+
+
+b) Check your chains with traceplots and tankplots. Interpret these graphs to explain why, or why not, your HMC model is suitable for inference.
+```{r}
+# Using 'pairs' directly on the model object, so that R knows to display parameter names 
+# and parameter correlations:
+pairs( m2a_4c )
+
+# This is a matrix of bivariate scatter plots.
+# The smoothed histogram of each parameter is shown along the diagonal with its name. 
+# And the correlation between each pair of parameters is shown in the lower triangle 
+# of the matrix
+
+# For this model and these data, the resulting posterior distribution is quite nearly 
+# multivariate Gaussian. The density for sigma is skewed in the expected direction. 
+# But otherwise the quadratic approximation does almost as well as Hamiltonian 
+# Monte Carlo. 
+```
+```{r}
+traceplot( m2a_4c )
+# This is a clean, healthy Markov chain - stationary, wellmixing and converged. The gray 
+# region is warmup (500 samples), during which the Markov chain was adapting to improve sampling 
+# efficiency. The white region contains the samples used for inference. 
+```
+
+```{r}
+trankplot( m2a_4c, n_cols=2 )
+# The horizontal axis is rank, from 1 to the number of samples across all chains (2000 in 
+# this example). The vertical axis is the frequency of ranks in each bin of the histogram. 
+# This trank plot is what we hope for: Histograms that overlap and stay within the same range.
+```
+
+
+c) Now fit your HMC model with a flat prior for sigma, sigma ~ dunif(0,1). What effect does this prior have on your posterior distribution? Explain your answer.
+```{r}
+# fitting HMC with a flat prior for sigma
+m2c <- ulam(
+alist(
+log_gdp_std ~ dnorm( mu , sigma ) ,
+mu <- a[cid] + b[cid]*( rugged_std - 0.215 ) ,
+a[cid] ~ dnorm( 1 , 0.1 ) ,
+b[cid] ~ dnorm( 0 , 0.3 ) ,
+sigma ~ dunif(0,1)
+) , data=dat_slim , chains=4 , cores=4 )
+```
+
+```{r}
+show( m2c )
+```
+
+```{r}
+precis( m2c , 2 )
+# here, we can observe that the distribution does not change much essentially. However, 
+# it will be more clear when we visualize the posterior distributions plot
+```
+
+```{r}
+# comparing PRIOR distributions for 'sigma' in the two models
+prior_m2a_4c <- extract.prior(m2a_4c, n=1e4)
+prior_m2c <- extract.prior(m2c, n=1e4)
+
+pr_m2a_4c <- inv_logit(prior_m2a_4c$sigma)
+pr_m2c <- inv_logit(prior_m2c$sigma)
+
+dens(pr_m2a_4c, adj = 0.1, col='red', ylim = c(0, 7))
+dens(pr_m2c, adj = 0.1, add = TRUE, col='blue')
+```
+
+```{r}
+# comparing posterior distributions for 'a' in the two models
+post_m2a_4c <- extract.samples(m2a_4c)
+post_m2c <- extract.samples(m2c)
+dens(post_m2a_4c$a[, 2], lwd = 2, col='red')
+dens(post_m2c$a[, 2], add=TRUE, lwd = 2, col='blue')
+```
+```{r}
+# comparing posterior distributions for 'b' in the two models
+post_m2a_4c <- extract.samples(m2a_4c)
+post_m2c <- extract.samples(m2c)
+dens(post_m2a_4c$b[, 2], lwd = 2, col='red')
+dens(post_m2c$b[, 2], add=TRUE, lwd = 2, col='blue')
+```
+```{r}
+# comparing posterior distributions for 'sigma' in the two models
+post_m2a_4c <- extract.samples(m2a_4c)
+post_m2c <- extract.samples(m2c)
+dens(post_m2a_4c$sigma, lwd = 2, col='red')
+dens(post_m2c$sigma, add=TRUE, lwd = 2, col='blue')
+```
+
+```{r}
+# Although very similar in precis tables, posterior distributions upon visualization appear to be 
+# skewed in direction of respective priors. For model m2a_4c, the prior of sigma is inclined 
+# little towards the left, thus the posterior is also very little oriented towards the left.
+# For model m2c, since the prior is relatively flat, the posterior appears to be more uniformly 
+# centered.
+```
+
+```{r}
+# double checking the hygiene of the chains for model m2c using 'traceplot', just to be sure
+traceplot( m2c )
+```
+
+```{r}
+# double checking the hygiene of the chains for model m2c using 'trankplot', just to be sure
+trankplot( m2c , n_cols=2 )
+```
+
+
+d) Now fit your model with the log normal prior b[cid] ~ dlnorm(0,1) for b. What effect does this prior have on your posterior distribution? Explain your answer.
+```{r}
+m2d <- ulam(
+alist(
+log_gdp_std ~ dnorm( mu , sigma ) ,
+mu <- a[cid] + b[cid]*( rugged_std - 0.215 ) ,
+a[cid] ~ dnorm( 1 , 0.1 ) ,
+b[cid] ~ dlnorm( 0 , 1 ) ,
+sigma ~ dunif(0,1)
+) , data=dat_slim , chains=4 , cores=4 )
+```
+
+
+```{r}
+precis( m2d , 2 )
+```
+
+```{r}
+# comparing PRIOR distributions for 'b' in the three models
+prior_m2a_4c <- extract.prior(m2a_4c, n=1e4)
+prior_m2c <- extract.prior(m2c, n=1e4)
+prior_m2d <- extract.prior(m2d, n=1e4)
+
+pr_m2a_4c <- inv_logit(prior_m2a_4c$b)
+pr_m2c <- inv_logit(prior_m2c$b)
+pr_m2d <- inv_logit(prior_m2d$b)
+
+dens(pr_m2a_4c, adj = 0.1, col='red', ylim = c(0, 7))
+dens(pr_m2c, adj = 0.1, add = TRUE, col='blue')
+dens(pr_m2d, adj = 0.1, add = TRUE, col='yellow')
+```
+
+```{r}
+# comparing posterior distributions for 'a' in the three models
+post_m2d <- extract.samples(m2d)
+
+dens(post_m2a_4c$a[, 2], lwd = 2, col='red')
+dens(post_m2c$a[, 2], add=TRUE, lwd = 2, col='blue')
+dens(post_m2d$a[, 2], add=TRUE, lwd = 2, col='yellow')
+```
+
+```{r}
+# comparing posterior distributions for 'b' in the three models
+post_m2d <- extract.samples(m2d)
+
+dens(post_m2a_4c$b[, 2], lwd = 2, col='red', ylim = c(0, 20))
+dens(post_m2c$b[, 2], add=TRUE, lwd = 2, col='blue')
+dens(post_m2d$b[, 2], add=TRUE, lwd = 2, col='yellow')
+```
+```{r}
+# comparing posterior distributions for 'sigma' in the three models
+post_m2d <- extract.samples(m2d)
+
+dens(post_m2a_4c$sigma, lwd = 2, col='red')
+dens(post_m2c$sigma, add=TRUE, lwd = 2, col='blue')
+dens(post_m2d$sigma, add=TRUE, lwd = 2, col='yellow')
+```
+
+```{r}
+# The direction of LOG-NORMAL priors for model m2d as we can see from the prior plot above is 
+# towards the right.
+# For this reason, Posterior distributions of 'b' values upon visualization also appear to be 
+# centered at higher values towards the right in model m2d in comparison to models m2a_4c and m2c. 
+
+# The posterior of sigma is also centered towards the right in comparison to the other two 
+# models that show overlap.
+
+# Posterior of 'a' is almost nill (or little) affected
+```
+
+
+
+```{r}
+# double checking the hygiene of the chains for model m2d using 'traceplot', just to be sure
+traceplot( m2d )
+```
+
+```{r}
+# double checking the hygiene of the chains for model m2d using 'trankplot', just to be sure
+trankplot( m2d , n_cols=2 )
+```
+
+## 3. Binomial Regression
+We started the course sampling marbles from a bucket to estimate its contents and tossing a globe to estimate the proportion of its surface covered in water. Each made use of the binomial distribution and was ideal to introduce the fundamentals of Bayesian inference. Nevertheless, Binomial regression – which is any type of GLM using a binomial mean-variance relationship – introduces complications that we needed to postpone until now.
+Return to the prosocial chimpanzee experiment in section §11.1 of the textbook, and the HMC model that features individual chimpanzee (actor) parameters actor and individual treatment parameters:
+```{r}
+data(chimpanzees)
+d <- chimpanzees
+
+d$treatment <- 1 + d$prosoc_left + 2*d$condition
+
+# prior trimmed data list
+dat_list <- list(
+pulled_left = d$pulled_left,
+actor = d$actor,
+treatment = as.integer(d$treatment) )
+```
+
+```{r}
+m11.4 <- ulam(
+alist(
+pulled_left ~ dbinom( 1, p ),
+logit(p) <- a[actor] + b[treatment] ,
+a[actor] ~ dnorm( 0 , 1.5 ),
+b[treatment] ~ dnorm( 0, 0.5 )
+), data = dat_list, chains=4, log_lik =TRUE) # See sec 11.1 to prepare dat_list
+```
+
+```{r}
+precis( m11.4 , 2 )
+```
+
+a) Compare m11.4 to a Laplacian quadratic approximate posterior distribution, constructed using quap(), that also includes individual parameters for actor and treatment. What are the differences and similarities between the two approximate posteriors? Explain your answer.
+```{r}
+m3a <- quap(
+alist(
+pulled_left ~ dbinom( 1, p ),
+logit(p) <- a[actor] + b[treatment],
+a[actor] ~ dnorm( 0 , 1.5 ),
+b[treatment] ~ dnorm( 0, 0.5 )
+) , data=dat_list )
+precis(m3a,depth=2)
+```
+
+```{r}
+# comparing models using PSIS
+compare( m11.4, m3a, func=PSIS)
+# PSIS suggests that both models behave almost with similar precision. The PSIS values of both the 
+# models are same
+```
+
+```{r}
+# There is some difference in the a[2] values - there is a higher estimate with the ulam model.
+```
+
+
+```{r}
+# now comparing posterior distributions for 'a' in the two models
+post_m11.4 <- extract.samples(m11.4)
+post_m3a <- extract.samples(m3a)
+
+dens(post_m11.4$a[, 2], lwd = 2, col='purple', ylim = c(0, 0.6))
+dens(post_m3a$a[, 2], add=TRUE, lwd = 2, col='green')
+
+```
+
+```{r}
+# now comparing posterior distributions for 'b' in the two models
+post_m11.4 <- extract.samples(m11.4)
+post_m3a <- extract.samples(m3a)
+
+dens(post_m11.4$b[, 3], lwd = 2, col='purple', ylim = c(0, 1.5))
+dens(post_m3a$b[, 3], add=TRUE, lwd = 2, col='green')
+
+```
+
+```{r}
+# From the above visualization of posteriors, it is clear that both the models 'ulan' and 'quap' 
+# generate similar posterior distributions for 'a' and 'b'. However, for 'a', the ulam 
+# model (purple) placed more probability mass in the upper end of the tail which ends up pushing 
+# the mean of this posterior distribution further to the right when compared to that of the 
+# quadratic approximation model.
+# The reason behind this is that quadratic approximation is assuming the posterior distribution 
+# to be Gaussian and as a consequence producing a symmetric distribution with less 
+# probability mass in the upper tail. 
+```
+
+
+b) Change the prior on the variable intercept to dnorm( 0 , 10) and estimate the posterior distribution with both ulam() and quap(). Do the differences between the two estimations increase, decrease, or stay the same? Explain your answer.
+```{r}
+m11.4_3b <- ulam(
+alist(
+pulled_left ~ dbinom( 1, p ),
+logit(p) <- a[actor] + b[treatment] ,
+a[actor] ~ dnorm( 0 , 10),
+b[treatment] ~ dnorm( 0, 0.5 )
+), data = dat_list, chains=4, log_lik =TRUE)
+precis( m11.4_3b , 2 )
+```
+
+```{r}
+m3b <- quap(
+alist(
+pulled_left ~ dbinom( 1, p ),
+logit(p) <- a[actor] + b[treatment],
+a[actor] ~ dnorm( 0 , 10),
+b[treatment] ~ dnorm( 0, 0.5 )
+) , data=dat_list )
+precis(m3b,depth=2)
+```
+
+```{r}
+# comparing models using PSIS
+compare( m11.4_3b, m3b, func=PSIS)
+# This time, PSIS suggests that both models behave with different precision. The PSIS values of 
+# both the models are different. It is clear that 'ulan' is a better model for this choice of 
+# prior intercept.
+```
+
+```{r}
+# This time, there is NOTICEABLE difference in the a[2] values - there is again a higher 
+# estimate with the ulam model.
+```
+
+```{r}
+# visualizing PRIOR of 'a' used here
+prior <- extract.prior( m3b , n=1e4 )
+p <- inv_logit( prior$a )
+dens( p , adj=0.1 )
+```
+
+
+```{r}
+# now comparing posterior distributions for 'a' in the two models
+post_m11.4_3b <- extract.samples(m11.4_3b)
+post_m3b <- extract.samples(m3b)
+
+dens(post_m11.4_3b$a[, 2], lwd = 2, col='purple', ylim = c(0, 0.15))
+dens(post_m3b$a[, 2], add=TRUE, lwd = 2, col='green')
+```
+```{r}
+# It is noteworthy that the difference in 'a' values get bigger as we move towards a choice of 
+# flatter priors.
+
+# A flat Normal(0,10) prior on the intercept produces a very non-flat prior distribution on 
+# the outcome scale.
+
+# Most of the probability mass is piled up near zero and one. The model thinks, before it sees the 
+# data, that chimpanzees either never or always pull the left lever. This generates unnecessary 
+# inference error. 
+# A flat prior in the logit space is not a flat prior in the outcome probability space.
+```
+
+
+
