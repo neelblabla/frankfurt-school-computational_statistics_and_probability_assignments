@@ -1,0 +1,156 @@
+---
+title: "Computational Statistics & Probability"
+author: "Lab 3 - Causal Models"
+date: "Fall 2022"
+output:
+  pdf_document: 
+    latex_engine: pdflatex
+    keep_tex: false
+  html_document:
+    df_print: paged
+urlcolor: blue
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+answer_key <- FALSE
+library(rethinking)
+library(latex2exp)
+library(DiagrammeR)
+library(knitr)
+```
+
+## 1. English Foxes
+
+Urban foxes are like street gangs. Groups vary in size between two and eight foxes and each group maintains its own (almost exclusive) urban territory.  Some territories are larger than others. the data set `foxes` in the `rethinking` package consists of data for 116 foxes from 30 different urban groups in England. 
+
+
+```{r foxes, eval=FALSE, include=!answer_key}
+library(rethinking)
+data(foxes)
+d <- foxes
+precis(d)
+```
+
+```{r foxes setup, include=answer_key}
+library(rethinking)
+data(foxes)
+d <- foxes
+```
+
+The variable `area` encodes that some territories are larger than others. The variable `avgfood` encodes that some territories have more average food than others.  Suppose we wants to model the `weight` of each fox.  For our purposes here, assume the following causal DAG: 
+
+```{r, echo=FALSE, fig.align='center'}
+include_graphics("figs/fox_dag.png")
+```
+
+**a)** Does territory size causally influence the weight of foxes? Construct a quadratic approximation (*quap*) model to infer the total causal influence of `area` on `weight`. Does increasing the area available to each fox make it healthier (i.e., heavier)?  You should standardize your variables and use prior predictive simulations to show that your model's predictions stay within the range of possible outcome values. 
+
+
+
+```{r foxes a, include=answer_key}
+# From the DAG we can see there are no backdoor paths from `area` to `weight`.
+# Unsure? Use `daggity` to check:
+library(dagitty)
+dag_foxes <- dagitty("dag{
+                     A -> F
+                     F -> G -> W
+                     F -> W}"
+                     )
+
+# adjustment set to assess the effect of exposing A to outcome W:
+adjustmentSets( dag_foxes, exposure = "A", outcome="W" )
+# which returns the empty set, {}
+
+# So, we only need to include the variable `area`. Here is a model with 
+# standardized variables and standardized priors (i.e., mean = 0):
+
+d$A <- standardize(d$area)
+d$W <- standardize(d$weight)
+
+m1a <- quap(
+  alist (
+    W ~ dnorm( mu , sigma) ,
+    mu <- a + bA*A ,
+    a ~ dnorm( 0, 0.2 ) ,
+    bA ~ dnorm( 0, 0.5 ) ,
+    sigma ~ dexp( 1 )
+  ), data = d
+)
+precis( m1a )
+
+# The coefficient bA is very close to 0 (~ 0.02). Thus, within this data set, territory 
+# size (`area`) has no causal influence on the weight of foxes.
+```
+
+
+
+
+**b)** Now infer the causal influence of adding food (`avgfood`) to a territory. Would the introduction of more food make foxes heavier? Which covariates do you need to adjust to estimate the total causal influence of food?
+
+```{r foxes b, include=answer_key}
+# From the DAG we see there are no backdoor paths from `avgfood` to `weight`. 
+# Again, we can confirm this with dagitty: 
+
+# adjustment set to assess the effect of exposing A to outcome W:
+adjustmentSets( dag_foxes, exposure = "F", outcome="W" )
+# which returns the empty set, {}. Thus, we only need to include the variable `avgfood`.
+
+#Here is a model with standardized variables and standardized priors.
+
+d$F <- standardize( d$avgfood )
+m1b <- quap( 
+  alist (
+    W ~ dnorm( mu, sigma ),
+    mu <- a + bF*F, 
+    a ~ dnorm( 0, 0.2 ),
+    bF ~ dnorm( 0, 0.5 ),
+    sigma ~ dexp( 1 )
+  ), data=d)
+precis( m1b )
+
+# Within this "small world" data set, `avgfood` does not change the weight of foxes.
+# This result shouldl be expected if the DAG is correct: `avgfood` comes after 
+# `area` on the causal paths to `weight`.  Indeed, if we did see an influence, we
+# would then have grounds to reject this DAG.
+```
+
+
+
+**c)** Now infer the causal influence of group size (`groupsize`). Which covariates do you need to adjust to make this estimate? Inspect the posterior distribution of the resulting model. What do you think explains these data? Specifically, explain the estimates of the effects of `area`, `avgfood`, and `groupsize` on `weight`. How do they make sense together? (Hint: we covered an example in class which exhibited a similar relationship between predictors and outcome variables.)
+
+```{r foxes c, include=answer_key}
+# From the DAG we see there is a backdoor from `groupsize` to `weight` through 
+# `avgfood`.  We can confirm this with dagitty: 
+
+# adjustment set to assess the effect of exposing A to outcome W:
+adjustmentSets( dag_foxes, exposure = "G", outcome="W" )
+# which returns the set, {F}. 
+
+# Thus, to infer the causal influence of `groupsize` on `weight`, we need to 
+# include `avgfood` in addition to `groupsize`. Here is a model with standardized
+# variables and standardized priors:
+
+d$G <- standardize(d$groupsize)
+m1c <- quap( 
+  alist(
+    W ~ dnorm( mu , sigma ), mu <- a + bF*F + bG*G,
+    a ~ dnorm( 0,0.2 ),
+    bF ~ dnorm( 0,0.5 ),
+    bG ~ dnorm( 0,0.5 ),
+    sigma ~ dexp( 1 ) 
+    ), data=d 
+  )
+precis( m1c )
+
+# With model m1c we see that there is a MASKED EFFECT between `avgfood` and
+# `groupsize` on the `weight` of foxes.  Specifically, `avgfood` is positively 
+# associated with `weight`, controlling for group size, while `groupsize` is
+# negatively associated with `weight`, controlling for food.  
+
+# Put differently, more food increases weight but larger group size decreases
+# weight, and the total cause of food and group size cancel each other out. 
+```
+
+
+

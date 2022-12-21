@@ -1,0 +1,208 @@
+---
+title: "Computational Statistics & Probability"
+author: "Lab 5 - Multilevel Models"
+date: "Fall 2022"
+output:
+  pdf_document: 
+    latex_engine: pdflatex
+    keep_tex: false
+  html_document:
+    df_print: paged
+urlcolor: blue
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+answer_key <- FALSE
+library(rethinking)
+library(latex2exp)
+library(DiagrammeR)
+library(knitr)
+```
+
+## 1. Bangladesh Fertility Survey
+
+In 1980, a typical Bengali woman could have 5 or more children in her lifetime.  By the year 2000, a typical Bengali woman had only 2 or 3 children.  An historical data set of 1934 Bengali women from the 1988 Bangladesh Fertility Survey, named `bangladesh` in the `rethinking` package, can be used to explore the  adoption of contraception over this period within different districts of Bangladesh.  
+
+* `district`: the ID number of the administrative district each woman lives in
+* `use.contraception`: an indicator variable (with values 0 or 1) denoting whether each woman uses contraception.
+
+
+
+**a)** A large portion of time in applied statistics is devoted to inspecting and formatting your data, a task you have been spared thus far.  But this data set has an issue with the cluster variable `district` that needs your attention. Load your data and inspect the cluster variable `district`. Can you spot the problem?
+
+
+```{r Bangladesh, eval=FALSE, include=!answer_key}
+library(rethinking)
+data(bangladesh)
+d <- bangladesh
+sort(unique(d$district))
+```
+
+```{r Bangladesh a, include=answer_key}
+library(rethinking)
+data(bangladesh)
+d <- bangladesh
+# `district` is not contiguous: 54 is missing
+sort(unique(d$district))
+
+# The problem is that there are 60 districts, but the indices 1-53, 55-61 are 
+# used:  that is, '54' is missing.
+
+# make `district` contiguous
+d$district_id <- as.integer(as.factor(d$district))
+sort(unique(d$district_id))
+```
+
+**b)** Correct the problem with `district` and save as a new variable, `district_id`.
+
+```{r Bangladesh b, include=answer_key}
+
+# To use `district` as a contiguous index variable, we need to use the coercion
+# function `as.factor` to return a sequence encoding the levels of
+# `district`, then apply `as.integer` to ensure the data type of these levels
+# are integers.  This is saved as a new variable, `district_id`:
+
+d$district_id <- as.integer(as.factor(d$district))
+sort(unique(d$district_id))
+
+```
+
+**c)** Turn now to predicting `contraception`, clustered by `district_id`. Fit both (1) a traditional fixed-effect model and (2) a varying-effects model.  
+
+```{r Bangladesh c, include=answer_key}
+
+set.seed(1776)
+# trimmed data list
+data_slim <- list(
+    use_contraception = d$use.contraception,
+    district_id = d$district_id )
+
+# fixed effects model
+m1_fixed <- ulam(
+  alist(
+    use_contraception ~ dbinom( 1 , p ),
+    logit(p) <- a_district[district_id],
+    a_district[district_id] ~ dnorm(0,10)
+  ), data=data_slim, chains=1)     # set chains to 1 for speed
+
+
+# varying effects model
+m1_varying <- ulam(
+  alist(
+    use_contraception ~ dbinom( 1 , p ),
+    logit(p) <- a+ a_district[district_id],
+    a ~ dnorm(0,10), 
+    a_district[district_id] ~ dnorm(0,sigma),
+    sigma ~ dcauchy(0,1)
+  ), data=data_slim, chains=1)    # set chains to 1 for speed
+
+
+```
+
+
+**d)** What are the *predicted* probabilities of contraception use for each district?  You can do this using `link`.
+
+```{r Bangladesh d, include=answer_key}
+# First, create a vector `pred.dist` from the district ids:
+set.seed(1776)
+pred.dist <- list(district_id=1:60)
+
+# Now we use `link` to get predictions from any linear model associated with the
+# outcome variable:
+
+pred_f <- link(m1_fixed, data=pred.dist)
+pred_v <- link(m1_varying, data=pred.dist)
+
+# For the fixed effect model and the varying effect model, a prediction for 
+# contraception use for each district is computed from 1000 samples from the 
+# respective posterior distributions.
+
+# For example,
+
+str(pred_f)
+
+# yields 1000 probabilities sampled from the fixed effect posterior for each of 
+# the 60 districts.
+
+# We now may follow the usual procedure to calculate the average probabilities
+# of each district for the fixed-effect and varrying-effect model:
+
+p_f.mean <- apply( pred_f, 2, mean)
+p_v.mean <- apply( pred_v, 2, mean)
+
+```
+
+
+**e)** Plot the predicted proportions of women in each district using contraception, for both the fixed effects model and varrying effects model.  
+
+```{r Bangladesh e, include=answer_key}
+plot( 1:60 , p_f.mean, col="steelblue", pch=16, xlab="District", 
+      ylab="probability of using contraception")
+points(1:60, p_v.mean )
+abline( h=logistic(coef( m1_varying)[1]) , 
+        lty=2 )  # plots line for fixed `a`
+legend("topright",c("fixed effect","varrying effect"),
+       cex=.8,col=c("steelblue","black"),pch=c(16,1))
+
+# DISCUSSION: For each district there are two estimated probabilities of contraception
+# use, one generated by the fixed effects model `p_f` (solid blue circles) and one 
+# generated by the varying effects model `p_v` (open black circles). The dashed line 
+# is the average proportion of women using contraception in the entire population 
+# of all 60 districts. 
+
+# For each district, observe that the estimated probabilities of the varying effects 
+# model (black circles) are *always* closer to the population average (dashed line)
+# than the fixed effect estimates.  Some of these differences are extreme:  
+
+# maximum absolute difference:
+max(abs(p_f.mean - p_v.mean))
+
+# which district has this max difference
+which.max(abs(p_f.mean - p_v.mean))
+
+# District 3 has a fixed estimate of 0.956, P(C=1) = 0.956
+p_f.mean[3]
+# whereas that district has a vary-effects estimate of 0.451
+p_v.mean[3]
+
+# Conversely, the fixed effect model predicts that no one in District 11 uses 
+# contraception
+min(p_f.mean)
+which.min(p_f.mean)
+# yet the varying effect model predicts estimates the probability to be about 
+# 31%:
+p_v.mean[49]
+
+# Why are the estimates for District 3 and District 11 so different? In District
+# 3 there are only two women:
+sum(d$district_id == 3)
+# both of whom use contraception:
+d[d$district_id==3, ]
+# whereas in District 11 none of the 21 women use contraception:
+d[d$district_id==11, ]
+
+# The varying effect model was able to *pool* information from other districts
+# to give a better estimate than "all" or "none", which the fixed effects model
+# essentially does. Further, the effect of *shrinkage* the varying effect model
+# introduces depends on the number of data points within each District.  The
+# model is more aggressive in the case of District 3 (2 observations) than 
+# it is with District 11 (21 observations). 
+
+# To visualize this relationship between the degree of shinkage and the number
+# of women in a district, let's first compute the number of women sampled from
+# each district in the dataset:
+
+n_by_district <- sapply( 1:60 ,
+    function(indx) length(d$district_id[d$district_id==indx]) )
+
+# Next, compute shrinkage for each district:
+shrinkage <- abs( p_f.mean - p_v.mean )
+```
+
+```{r Bangladesh e2, include=answer_key}
+
+# compute the number of women sampled in each district
+plot( n_by_district , shrinkage , col="tomato" ,
+    xlab="number of women sampled" , ylab="shrinkage of each district" )
+```

@@ -1,0 +1,112 @@
+---
+title: "Computational Statistics & Probability"
+author: "Lab 2 - Linear Models"
+date: "Fall 2022"
+output:
+  pdf_document:
+    latex_engine: pdflatex
+    keep_tex: no
+  html_document:
+    df_print: paged
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+answer_key <- FALSE
+library(rethinking)
+library(DiagrammeR)
+```
+
+## 1. Predicting height from weight
+
+Consider the following model from Chapter 4 of the textbook to use the !Kung census to predict height from weight of adults.
+
+```{r Howell, include=TRUE}
+library(rethinking)
+data(Howell1)
+d <- Howell1
+d2 <- d[ d$age >= 18 , ] 
+xbar <- mean(d2$weight) 
+m4.3 <- quap(
+  alist(
+    height ~ dnorm( mu , sigma ) , 
+    mu <- a + b*( weight - xbar ), 
+    a ~ dnorm( 178 , 20 ), 
+    b ~ dlnorm( 0 , 1 ), 
+    sigma ~ dunif( 0 , 50 ) 
+  ), data=d2 )
+```
+
+
+**a)** Using model `m4.3`, provide the predicted heights and 89% credibility intervals for each of the following individuals:
+
+```{r table2, echo=FALSE, message=FALSE, warnings=FALSE, results='asis'}
+tabl <- "
+| individual  |  weight  |  expected height |  89% interval  | 
+|:-----------:|:--------:|:----------------:|:--------------:|
+| 1           | 47       |                  |                |
+| 2           | 60       |                  |                |
+| 3           | 37       |                  |                |
+| 4           | 51       |                  |                |
+| 5           | 43       |                  |                |
+"
+cat(tabl) # output the table in a format good for HTML/PDF/docx conversion
+```
+
+
+```{r Kung a, include=answer_key}
+# First, create a dataframe of weights called `dat`
+dat <- data.frame(individual = 1:5,  weight= c(47, 60, 37, 51, 43))
+dat
+
+# Next, use the rethinking package `sim` function to run data through your 
+# model:
+ht_sim <- sim( m4.3 , data = dat)
+head(ht_sim)
+
+# Then calculate the expected heights from your simulation using apply, where 
+# `2` indicates the columns of ht_sim:
+Exp_ht <- apply(ht_sim, 2, mean)
+Exp_ht
+# and the 89% credibility interval: 
+ht_CI <- apply(ht_sim, 2, PI, prob=0.89)
+ht_CI
+# These values can be added to the dataframe `dat` and displayed for an answer:
+dat$Exp_ht <- Exp_ht
+dat$CI89_L <- ht_CI[1,]
+dat$CI89_U <- ht_CI[2,]
+# The next table displays `round(dat, 1)`, which answers our questions:
+```
+
+```{r Kung a2, echo=FALSE, results = 'axis', include=answer_key}
+library(knitr)
+kable(round(dat, 1 ), caption= "Predicted heights from weights")
+```
+
+**b)** Plot your regression line and 89% credibility interval.
+
+```{r Kung b, include=answer_key}
+
+# define a sequence of weights 
+weight.seq <- seq( from=25, to=70, by=1 )
+
+# use link to compute mu for each sample from the posterior
+# and for each weight in `weight.seq`
+mu <- link( m4.3 , data=data.frame(weight=weight.seq) )
+
+# summarize the distribution of mu
+mu.mean <-apply( mu , 2, mean )  # mean of each column (axis '2') of the
+                                 # matrix mu
+
+# compute the 89% PI credibility interval
+mu.PI <- apply( mu, 2, PI, prob=0.89 )
+
+# plot data
+plot( height ~ weight , data=d2, col=col.alpha("black",0.5) )
+#plot MAP line, aka the mean mu for each weight
+lines( weight.seq, mu.mean, col="steelblue", lwd=2)
+#plot a shaded region for 89% PI
+shade( mu.PI , weight.seq, col=col.alpha("steelblue",0.33) )
+```
+
